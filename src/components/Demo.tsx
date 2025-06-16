@@ -1,215 +1,145 @@
-/* eslint-disable @typescript-eslint/no-unused-vars */
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { signIn, signOut, getCsrfToken } from "next-auth/react";
-import sdk, {
-  SignIn as SignInCore,
-} from "@farcaster/frame-sdk";
-import {
-  useAccount,
-  useSendTransaction,
-  useSignMessage,
-  useSignTypedData,
-  useWaitForTransactionReceipt,
-  useDisconnect,
-  useConnect,
-  useSwitchChain,
-  useChainId,
-} from "wagmi";
-import {
-  useConnection as useSolanaConnection,
-  useWallet as useSolanaWallet,
-} from '@solana/wallet-adapter-react';
-import { useHasSolanaProvider } from "./providers/SafeFarcasterSolanaProvider";
-import { ShareButton } from "./ui/Share";
-
+import sdk, { SignIn as SignInCore } from "@farcaster/frame-sdk";
+import { useAccount, useSendTransaction, useSignMessage, useDisconnect, useConnect } from "wagmi";
 import { config } from "~/components/providers/WagmiProvider";
 import { Button } from "~/components/ui/Button";
-import { truncateAddress } from "~/lib/truncateAddress";
-import { base, degen, mainnet, optimism, unichain } from "wagmi/chains";
-import { BaseError, UserRejectedRequestError } from "viem";
 import { useSession } from "next-auth/react";
 import { useMiniApp } from "@neynar/react";
-import { PublicKey, SystemProgram, Transaction } from '@solana/web3.js';
 import { Header } from "~/components/ui/Header";
 import { Footer } from "~/components/ui/Footer";
-import { USE_WALLET, APP_NAME } from "~/lib/constants";
+import { APP_NAME } from "~/lib/constants";
 
-export type Tab = 'home' | 'actions' | 'context' | 'wallet';
+type Tab = 'home' | 'collections' | 'my-nfts' | 'wallet';
 
-interface NeynarUser {
-  fid: number;
-  score: number;
+interface NFTCollection {
+  id: string;
+  name: string;
+  description: string;
+  image: string;
+  price: string;
+  remaining: number;
+  total: number;
 }
 
-export default function Demo(
-  { title }: { title?: string } = { title: "Frames v2 Demo" }
-) {
-  const {
-    isSDKLoaded,
-    context,
-    added,
-    notificationDetails,
-    actions,
-  } = useMiniApp();
-  const [isContextOpen, setIsContextOpen] = useState(false);
+interface NFT {
+  id: string;
+  collectionId: string;
+  name: string;
+  image: string;
+  mintDate: string;
+}
+
+export default function NFTMintingApp({ title = "NFT Minting" }: { title?: string }) {
+  const { isSDKLoaded, context } = useMiniApp();
   const [activeTab, setActiveTab] = useState<Tab>('home');
   const [txHash, setTxHash] = useState<string | null>(null);
-  const [sendNotificationResult, setSendNotificationResult] = useState("");
   const [copied, setCopied] = useState(false);
-  const [neynarUser, setNeynarUser] = useState<NeynarUser | null>(null);
+  const [selectedCollection, setSelectedCollection] = useState<NFTCollection | null>(null);
+  const [myNFTs, setMyNFTs] = useState<NFT[]>([]);
 
   const { address, isConnected } = useAccount();
-  const chainId = useChainId();
-  const hasSolanaProvider = useHasSolanaProvider();
-  const solanaWallet = useSolanaWallet();
-  const { publicKey: solanaPublicKey } = solanaWallet;
 
-  useEffect(() => {
-    console.log("isSDKLoaded", isSDKLoaded);
-    console.log("context", context);
-    console.log("address", address);
-    console.log("isConnected", isConnected);
-    console.log("chainId", chainId);
-  }, [context, address, isConnected, chainId, isSDKLoaded]);
+  // Mock collections data
+  const collections: NFTCollection[] = useMemo(() => [
+    {
+      id: "1",
+      name: "Purple Pixels",
+      description: "Unique pixel art collectibles on Base",
+      image: "https://i.imgur.com/Jpgs0tW.png",
+      price: "0.001",
+      remaining: 42,
+      total: 100
+    },
+    {
+      id: "2",
+      name: "Farcaster Frens",
+      description: "Exclusive Farcaster community NFTs",
+      image: "https://i.imgur.com/5XZwV7q.png",
+      price: "0.0025",
+      remaining: 87,
+      total: 150
+    },
+    {
+      id: "3",
+      name: "Degens Anonymous",
+      description: "For those who ape responsibly",
+      image: "https://i.imgur.com/8QZQZQZ.png",
+      price: "0.005",
+      remaining: 15,
+      total: 50
+    }
+  ], []);
 
-  // Fetch Neynar user object when context is available
+  // Mock function to fetch user's NFTs
   useEffect(() => {
-    const fetchNeynarUserObject = async () => {
-      if (context?.user?.fid) {
-        try {
-          const response = await fetch(`/api/users?fids=${context.user.fid}`);
-          const data = await response.json();
-          if (data.users?.[0]) {
-            setNeynarUser(data.users[0]);
-          }
-        } catch (error) {
-          console.error('Failed to fetch Neynar user object:', error);
+    if (address) {
+      // In a real app, you'd fetch this from your backend
+      const mockNFTs: NFT[] = [
+        {
+          id: "101",
+          collectionId: "1",
+          name: "Purple Pixel #42",
+          image: "https://i.imgur.com/Jpgs0tW.png",
+          mintDate: "2023-10-15"
+        },
+        {
+          id: "203",
+          collectionId: "2",
+          name: "Farcaster Fren #12",
+          image: "https://i.imgur.com/5XZwV7q.png",
+          mintDate: "2023-11-02"
         }
-      }
-    };
+      ];
+      setMyNFTs(mockNFTs);
+    }
+  }, [address]);
 
-    fetchNeynarUserObject();
-  }, [context?.user?.fid]);
-
-  const {
-    sendTransaction,
-    error: sendTxError,
-    isError: isSendTxError,
-    isPending: isSendTxPending,
-  } = useSendTransaction();
-
-  const { isLoading: isConfirming, isSuccess: isConfirmed } =
-    useWaitForTransactionReceipt({
-      hash: txHash as `0x${string}`,
-    });
-
-  const {
-    signTypedData,
-    error: signTypedError,
-    isError: isSignTypedError,
-    isPending: isSignTypedPending,
-  } = useSignTypedData();
-
+  const { sendTransaction, isPending: isSendTxPending } = useSendTransaction();
   const { disconnect } = useDisconnect();
   const { connect, connectors } = useConnect();
 
-  const {
-    switchChain,
-    error: switchChainError,
-    isError: isSwitchChainError,
-    isPending: isSwitchChainPending,
-  } = useSwitchChain();
-
-  const nextChain = useMemo(() => {
-    if (chainId === base.id) {
-      return optimism;
-    } else if (chainId === optimism.id) {
-      return degen;
-    } else if (chainId === degen.id) {
-      return mainnet;
-    } else if (chainId === mainnet.id) {
-      return unichain;
-    } else {
-      return base;
-    }
-  }, [chainId]);
-
-  const handleSwitchChain = useCallback(() => {
-    switchChain({ chainId: nextChain.id });
-  }, [switchChain, nextChain.id]);
-
-  const sendNotification = useCallback(async () => {
-    setSendNotificationResult("");
-    if (!notificationDetails || !context) {
-      return;
-    }
+  const mintNFT = useCallback(async (collection: NFTCollection) => {
+    if (!isConnected || !address) return;
 
     try {
-      const response = await fetch("/api/send-notification", {
-        method: "POST",
-        mode: "same-origin",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          fid: context.user.fid,
-          notificationDetails,
-        }),
-      });
-
-      if (response.status === 200) {
-        setSendNotificationResult("Success");
-        return;
-      } else if (response.status === 429) {
-        setSendNotificationResult("Rate limited");
-        return;
-      }
-
-      const data = await response.text();
-      setSendNotificationResult(`Error: ${data}`);
-    } catch (error) {
-      setSendNotificationResult(`Error: ${error}`);
-    }
-  }, [context, notificationDetails]);
-
-  const sendTx = useCallback(() => {
-    sendTransaction(
-      {
-        // call yoink() on Yoink contract
-        to: "0x4bBFD120d9f352A0BEd7a014bd67913a2007a878",
-        data: "0x9846cd9efc000023c0",
-      },
-      {
-        onSuccess: (hash) => {
-          setTxHash(hash);
+      // In a real app, you'd call your smart contract here
+      // This is just a mock transaction
+      sendTransaction(
+        {
+          to: address, // Sending to self for demo
+          value: BigInt(Math.floor(parseFloat(collection.price) * 1e18)),
+          data: "0x" // Mock data
         },
-      }
-    );
-  }, [sendTransaction]);
-
-  const signTyped = useCallback(() => {
-    signTypedData({
-      domain: {
-        name: APP_NAME,
-        version: "1",
-        chainId,
-      },
-      types: {
-        Message: [{ name: "content", type: "string" }],
-      },
-      message: {
-        content: `Hello from ${APP_NAME}!`,
-      },
-      primaryType: "Message",
-    });
-  }, [chainId, signTypedData]);
-
-  const toggleContext = useCallback(() => {
-    setIsContextOpen((prev) => !prev);
-  }, []);
+        {
+          onSuccess: (hash) => {
+            setTxHash(hash);
+            // Simulate successful mint
+            setTimeout(() => {
+              setMyNFTs(prev => [
+                ...prev,
+                {
+                  id: `${collection.id}${Math.floor(Math.random() * 1000)}`,
+                  collectionId: collection.id,
+                  name: `${collection.name} #${Math.floor(Math.random() * 100)}`,
+                  image: collection.image,
+                  mintDate: new Date().toISOString().split('T')[0]
+                }
+              ]);
+              setTxHash(null);
+            }, 3000);
+          },
+        }
+      );
+    } catch (error) {
+      console.error("Minting error:", error);
+    }
+  }, [isConnected, address, sendTransaction]);
 
   if (!isSDKLoaded) {
-    return <div>Loading...</div>;
+    return <div className="flex items-center justify-center h-screen">Loading...</div>;
   }
 
   return (
@@ -222,89 +152,181 @@ export default function Demo(
       }}
     >
       <div className="mx-auto py-2 px-4 pb-20">
-        <Header neynarUser={neynarUser} />
+        <Header />
 
         <h1 className="text-2xl font-bold text-center mb-4">{title}</h1>
 
         {activeTab === 'home' && (
-          <div className="flex items-center justify-center h-[calc(100vh-200px)] px-6">
+          <div className="flex flex-col items-center justify-center min-h-[calc(100vh-200px)] px-6">
             <div className="text-center w-full max-w-md mx-auto">
-              <p className="text-lg mb-2">Put your content here!</p>
-              <p className="text-sm text-gray-500">Powered by Neynar 🪐</p>
+              <div className="bg-gradient-to-r from-purple-500 to-pink-500 text-white p-6 rounded-xl mb-6">
+                <h2 className="text-xl font-bold mb-2">Welcome to {APP_NAME}</h2>
+                <p className="text-sm">Mint exclusive NFTs directly from your favorite apps</p>
+              </div>
+              
+              <div className="grid grid-cols-2 gap-4 mb-6">
+                <div 
+                  className="bg-gray-100 dark:bg-gray-800 p-4 rounded-lg cursor-pointer hover:bg-purple-100 dark:hover:bg-purple-900 transition"
+                  onClick={() => setActiveTab('collections')}
+                >
+                  <div className="text-2xl mb-2">🖼️</div>
+                  <p className="text-sm">Collections</p>
+                </div>
+                <div 
+                  className="bg-gray-100 dark:bg-gray-800 p-4 rounded-lg cursor-pointer hover:bg-purple-100 dark:hover:bg-purple-900 transition"
+                  onClick={() => setActiveTab('my-nfts')}
+                >
+                  <div className="text-2xl mb-2">🎴</div>
+                  <p className="text-sm">My NFTs</p>
+                </div>
+              </div>
+              
+              <p className="text-sm text-gray-500">Powered by Farcaster & Base</p>
             </div>
           </div>
         )}
 
-        {activeTab === 'actions' && (
-          <div className="space-y-3 px-6 w-full max-w-md mx-auto">
-            <ShareButton 
-              buttonText="Share Mini App"
-              cast={{
-                text: "Check out this awesome frame @1 @2 @3! 🚀🪐",
-                bestFriends: true,
-                embeds: [`${process.env.NEXT_PUBLIC_URL}/share/${context?.user?.fid || ''}`]
-              }}
-              className="w-full"
-            />
-
-            <SignIn />
-
-            <Button onClick={() => actions.openUrl("https://www.youtube.com/watch?v=dQw4w9WgXcQ")} className="w-full">Open Link</Button>
-
-            <Button onClick={actions.close} className="w-full">Close Mini App</Button>
-
-            <Button onClick={actions.addMiniApp} disabled={added} className="w-full">
-              Add Mini App to Client
-            </Button>
-
-            {sendNotificationResult && (
-              <div className="text-sm w-full">
-                Send notification result: {sendNotificationResult}
+        {activeTab === 'collections' && (
+          <div className="space-y-4 px-6">
+            <h2 className="text-xl font-bold">Available Collections</h2>
+            
+            {selectedCollection ? (
+              <div className="bg-gray-100 dark:bg-gray-800 rounded-xl p-4">
+                <button 
+                  onClick={() => setSelectedCollection(null)}
+                  className="mb-4 text-sm text-purple-500 hover:underline"
+                >
+                  ← Back to collections
+                </button>
+                
+                <div className="flex flex-col md:flex-row gap-6">
+                  <img 
+                    src={selectedCollection.image} 
+                    alt={selectedCollection.name}
+                    className="w-full md:w-1/2 h-auto rounded-lg"
+                  />
+                  
+                  <div className="flex-1">
+                    <h3 className="text-lg font-bold">{selectedCollection.name}</h3>
+                    <p className="text-sm text-gray-600 dark:text-gray-400 my-2">
+                      {selectedCollection.description}
+                    </p>
+                    
+                    <div className="my-4">
+                      <div className="flex justify-between text-sm mb-1">
+                        <span>Price:</span>
+                        <span className="font-bold">{selectedCollection.price} ETH</span>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <span>Remaining:</span>
+                        <span className="font-bold">
+                          {selectedCollection.remaining}/{selectedCollection.total}
+                        </span>
+                      </div>
+                    </div>
+                    
+                    <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2.5 mt-2">
+                      <div 
+                        className="bg-purple-500 h-2.5 rounded-full" 
+                        style={{ width: `${(selectedCollection.remaining / selectedCollection.total) * 100}%` }}
+                      ></div>
+                    </div>
+                    
+                    <Button 
+                      onClick={() => mintNFT(selectedCollection)}
+                      disabled={!isConnected || isSendTxPending}
+                      isLoading={isSendTxPending || !!txHash}
+                      className="w-full mt-6"
+                    >
+                      {txHash ? "Minting..." : "Mint NFT"}
+                    </Button>
+                    
+                    {txHash && (
+                      <div className="text-xs mt-2 text-center text-gray-500">
+                        Transaction: {truncateAddress(txHash)}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {collections.map(collection => (
+                  <div 
+                    key={collection.id}
+                    className="bg-gray-100 dark:bg-gray-800 rounded-lg overflow-hidden cursor-pointer hover:shadow-lg transition"
+                    onClick={() => setSelectedCollection(collection)}
+                  >
+                    <img 
+                      src={collection.image} 
+                      alt={collection.name}
+                      className="w-full h-48 object-cover"
+                    />
+                    <div className="p-4">
+                      <h3 className="font-bold">{collection.name}</h3>
+                      <p className="text-sm text-gray-600 dark:text-gray-400 truncate">
+                        {collection.description}
+                      </p>
+                      <div className="flex justify-between items-center mt-2">
+                        <span className="text-sm font-bold">{collection.price} ETH</span>
+                        <span className="text-xs bg-purple-100 dark:bg-purple-900 text-purple-800 dark:text-purple-200 px-2 py-1 rounded">
+                          {collection.remaining} left
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                ))}
               </div>
             )}
-            <Button onClick={sendNotification} disabled={!notificationDetails} className="w-full">
-              Send notification
-            </Button>
-
-            <Button 
-              onClick={async () => {
-                if (context?.user?.fid) {
-                  const shareUrl = `${process.env.NEXT_PUBLIC_URL}/share/${context.user.fid}`;
-                  await navigator.clipboard.writeText(shareUrl);
-                  setCopied(true);
-                  setTimeout(() => setCopied(false), 2000);
-                }
-              }}
-              disabled={!context?.user?.fid}
-              className="w-full"
-            >
-              {copied ? "Copied!" : "Copy share URL"}
-            </Button>
           </div>
         )}
 
-        {activeTab === 'context' && (
-          <div className="mx-6">
-            <h2 className="text-lg font-semibold mb-2">Context</h2>
-            <div className="p-4 bg-gray-100 dark:bg-gray-800 rounded-lg">
-              <pre className="font-mono text-xs whitespace-pre-wrap break-words w-full">
-                {JSON.stringify(context, null, 2)}
-              </pre>
-            </div>
+        {activeTab === 'my-nfts' && (
+          <div className="px-6">
+            <h2 className="text-xl font-bold mb-4">My NFT Collection</h2>
+            
+            {!isConnected ? (
+              <div className="text-center py-10">
+                <p className="mb-4">Connect your wallet to view your NFTs</p>
+                <Button onClick={() => connect({ connector: connectors[0] })}>
+                  Connect Wallet
+                </Button>
+              </div>
+            ) : myNFTs.length === 0 ? (
+              <div className="text-center py-10">
+                <p>You don't have any NFTs yet</p>
+                <Button 
+                  onClick={() => setActiveTab('collections')}
+                  className="mt-4"
+                >
+                  Browse Collections
+                </Button>
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                {myNFTs.map(nft => (
+                  <div key={nft.id} className="bg-gray-100 dark:bg-gray-800 rounded-lg overflow-hidden">
+                    <img 
+                      src={nft.image} 
+                      alt={nft.name}
+                      className="w-full h-32 object-cover"
+                    />
+                    <div className="p-3">
+                      <h3 className="font-bold text-sm truncate">{nft.name}</h3>
+                      <p className="text-xs text-gray-500 mt-1">Minted: {nft.mintDate}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
-        {activeTab === 'wallet' && USE_WALLET && (
+        {activeTab === 'wallet' && (
           <div className="space-y-3 px-6 w-full max-w-md mx-auto">
             {address && (
               <div className="text-xs w-full">
                 Address: <pre className="inline w-full">{truncateAddress(address)}</pre>
-              </div>
-            )}
-
-            {chainId && (
-              <div className="text-xs w-full">
-                Chain ID: <pre className="inline w-full">{chainId}</pre>
               </div>
             )}
 
@@ -315,406 +337,24 @@ export default function Demo(
               >
                 Disconnect
               </Button>
-            ) : context ? (
+            ) : (
               <Button
                 onClick={() => connect({ connector: connectors[0] })}
                 className="w-full"
               >
-                Connect
+                Connect Wallet
               </Button>
-            ) : (
-              <div className="space-y-3 w-full">
-                <Button
-                  onClick={() => connect({ connector: connectors[1] })}
-                  className="w-full"
-                >
-                  Connect Coinbase Wallet
-                </Button>
-                <Button
-                  onClick={() => connect({ connector: connectors[2] })}
-                  className="w-full"
-                >
-                  Connect MetaMask
-                </Button>
-              </div>
-            )}
-
-            <SignEvmMessage />
-
-            {isConnected && (
-              <>
-                <SendEth />
-                <Button
-                  onClick={sendTx}
-                  disabled={!isConnected || isSendTxPending}
-                  isLoading={isSendTxPending}
-                  className="w-full"
-                >
-                  Send Transaction (contract)
-                </Button>
-                {isSendTxError && renderError(sendTxError)}
-                {txHash && (
-                  <div className="text-xs w-full">
-                    <div>Hash: {truncateAddress(txHash)}</div>
-                    <div>
-                      Status:{" "}
-                      {isConfirming
-                        ? "Confirming..."
-                        : isConfirmed
-                        ? "Confirmed!"
-                        : "Pending"}
-                    </div>
-                  </div>
-                )}
-                <Button
-                  onClick={signTyped}
-                  disabled={!isConnected || isSignTypedPending}
-                  isLoading={isSignTypedPending}
-                  className="w-full"
-                >
-                  Sign Typed Data
-                </Button>
-                {isSignTypedError && renderError(signTypedError)}
-                <Button
-                  onClick={handleSwitchChain}
-                  disabled={isSwitchChainPending}
-                  isLoading={isSwitchChainPending}
-                  className="w-full"
-                >
-                  Switch to {nextChain.name}
-                </Button>
-                {isSwitchChainError && renderError(switchChainError)}
-              </>
             )}
           </div>
         )}
 
-        <Footer activeTab={activeTab} setActiveTab={setActiveTab} showWallet={USE_WALLET} />
+        <Footer activeTab={activeTab} setActiveTab={setActiveTab} showWallet={true} />
       </div>
     </div>
   );
 }
 
-// Solana functions inspired by farcaster demo
-// https://github.com/farcasterxyz/frames-v2-demo/blob/main/src/components/Demo.tsx
-function SignSolanaMessage({ signMessage }: { signMessage?: (message: Uint8Array) => Promise<Uint8Array> }) {
-  const [signature, setSignature] = useState<string | undefined>();
-  const [signError, setSignError] = useState<Error | undefined>();
-  const [signPending, setSignPending] = useState(false);
-
-  const handleSignMessage = useCallback(async () => {
-    setSignPending(true);
-    try {
-      if (!signMessage) {
-        throw new Error('no Solana signMessage');
-      }
-      const input = new TextEncoder().encode("Hello from Solana!");
-      const signatureBytes = await signMessage(input);
-      const signature = btoa(String.fromCharCode(...signatureBytes));
-      setSignature(signature);
-      setSignError(undefined);
-    } catch (e) {
-      if (e instanceof Error) {
-        setSignError(e);
-      }
-    } finally {
-      setSignPending(false);
-    }
-  }, [signMessage]);
-
-  return (
-    <>
-      <Button
-        onClick={handleSignMessage}
-        disabled={signPending}
-        isLoading={signPending}
-        className="mb-4"
-      >
-        Sign Message
-      </Button>
-      {signError && renderError(signError)}
-      {signature && (
-        <div className="mt-2 text-xs">
-          <div>Signature: {signature}</div>
-        </div>
-      )}
-    </>
-  );
+function truncateAddress(address?: string) {
+  if (!address) return "";
+  return `${address.slice(0, 6)}...${address.slice(-4)}`;
 }
-
-function SendSolana() {
-  const [state, setState] = useState<
-    | { status: 'none' }
-    | { status: 'pending' }
-    | { status: 'error'; error: Error }
-    | { status: 'success'; signature: string }
-  >({ status: 'none' });
-
-  const { connection: solanaConnection } = useSolanaConnection();
-  const { sendTransaction, publicKey } = useSolanaWallet();
-
-  // This should be replaced but including it from the original demo
-  // https://github.com/farcasterxyz/frames-v2-demo/blob/main/src/components/Demo.tsx#L718
-  const ashoatsPhantomSolanaWallet = 'Ao3gLNZAsbrmnusWVqQCPMrcqNi6jdYgu8T6NCoXXQu1';
-
-  const handleSend = useCallback(async () => {
-    setState({ status: 'pending' });
-    try {
-      if (!publicKey) {
-        throw new Error('no Solana publicKey');
-      }
-
-      const { blockhash } = await solanaConnection.getLatestBlockhash();
-      if (!blockhash) {
-        throw new Error('failed to fetch latest Solana blockhash');
-      }
-
-      const fromPubkeyStr = publicKey.toBase58();
-      const toPubkeyStr = ashoatsPhantomSolanaWallet;
-      const transaction = new Transaction();
-      transaction.add(
-        SystemProgram.transfer({
-          fromPubkey: new PublicKey(fromPubkeyStr),
-          toPubkey: new PublicKey(toPubkeyStr),
-          lamports: 0n,
-        }),
-      );
-      transaction.recentBlockhash = blockhash;
-      transaction.feePayer = new PublicKey(fromPubkeyStr);
-
-      const simulation = await solanaConnection.simulateTransaction(transaction);
-      if (simulation.value.err) {
-        // Gather logs and error details for debugging
-        const logs = simulation.value.logs?.join('\n') ?? 'No logs';
-        const errDetail = JSON.stringify(simulation.value.err);
-        throw new Error(`Simulation failed: ${errDetail}\nLogs:\n${logs}`);
-      }
-      const signature = await sendTransaction(transaction, solanaConnection);
-      setState({ status: 'success', signature });
-    } catch (e) {
-      if (e instanceof Error) {
-        setState({ status: 'error', error: e });
-      } else {
-        setState({ status: 'none' });
-      }
-    }
-  }, [sendTransaction, publicKey, solanaConnection]);
-
-  return (
-    <>
-      <Button
-        onClick={handleSend}
-        disabled={state.status === 'pending'}
-        isLoading={state.status === 'pending'}
-        className="mb-4"
-      >
-        Send Transaction (sol)
-      </Button>
-      {state.status === 'error' && renderError(state.error)}
-      {state.status === 'success' && (
-        <div className="mt-2 text-xs">
-          <div>Hash: {truncateAddress(state.signature)}</div>
-        </div>
-      )}
-    </>
-  );
-}
-
-function SignEvmMessage() {
-  const { isConnected } = useAccount();
-  const { connectAsync } = useConnect();
-  const {
-    signMessage,
-    data: signature,
-    error: signError,
-    isError: isSignError,
-    isPending: isSignPending,
-  } = useSignMessage();
-
-  const handleSignMessage = useCallback(async () => {
-    if (!isConnected) {
-      await connectAsync({
-        chainId: base.id,
-        connector: config.connectors[0],
-      });
-    }
-
-    signMessage({ message: "Hello from Frames v2!" });
-  }, [connectAsync, isConnected, signMessage]);
-
-  return (
-    <>
-      <Button
-        onClick={handleSignMessage}
-        disabled={isSignPending}
-        isLoading={isSignPending}
-      >
-        Sign Message
-      </Button>
-      {isSignError && renderError(signError)}
-      {signature && (
-        <div className="mt-2 text-xs">
-          <div>Signature: {signature}</div>
-        </div>
-      )}
-    </>
-  );
-}
-
-function SendEth() {
-  const { isConnected, chainId } = useAccount();
-  const {
-    sendTransaction,
-    data,
-    error: sendTxError,
-    isError: isSendTxError,
-    isPending: isSendTxPending,
-  } = useSendTransaction();
-
-  const { isLoading: isConfirming, isSuccess: isConfirmed } =
-    useWaitForTransactionReceipt({
-      hash: data,
-    });
-
-  const toAddr = useMemo(() => {
-    // Protocol guild address
-    return chainId === base.id
-      ? "0x32e3C7fD24e175701A35c224f2238d18439C7dBC"
-      : "0xB3d8d7887693a9852734b4D25e9C0Bb35Ba8a830";
-  }, [chainId]);
-
-  const handleSend = useCallback(() => {
-    sendTransaction({
-      to: toAddr,
-      value: 1n,
-    });
-  }, [toAddr, sendTransaction]);
-
-  return (
-    <>
-      <Button
-        onClick={handleSend}
-        disabled={!isConnected || isSendTxPending}
-        isLoading={isSendTxPending}
-      >
-        Send Transaction (eth)
-      </Button>
-      {isSendTxError && renderError(sendTxError)}
-      {data && (
-        <div className="mt-2 text-xs">
-          <div>Hash: {truncateAddress(data)}</div>
-          <div>
-            Status:{" "}
-            {isConfirming
-              ? "Confirming..."
-              : isConfirmed
-              ? "Confirmed!"
-              : "Pending"}
-          </div>
-        </div>
-      )}
-    </>
-  );
-}
-
-function SignIn() {
-  const [signingIn, setSigningIn] = useState(false);
-  const [signingOut, setSigningOut] = useState(false);
-  const [signInResult, setSignInResult] = useState<SignInCore.SignInResult>();
-  const [signInFailure, setSignInFailure] = useState<string>();
-  const { data: session, status } = useSession();
-
-  const getNonce = useCallback(async () => {
-    const nonce = await getCsrfToken();
-    if (!nonce) throw new Error("Unable to generate nonce");
-    return nonce;
-  }, []);
-
-  const handleSignIn = useCallback(async () => {
-    try {
-      setSigningIn(true);
-      setSignInFailure(undefined);
-      const nonce = await getNonce();
-      const result = await sdk.actions.signIn({ nonce });
-      setSignInResult(result);
-
-      await signIn("credentials", {
-        message: result.message,
-        signature: result.signature,
-        redirect: false,
-      });
-    } catch (e) {
-      if (e instanceof SignInCore.RejectedByUser) {
-        setSignInFailure("Rejected by user");
-        return;
-      }
-
-      setSignInFailure("Unknown error");
-    } finally {
-      setSigningIn(false);
-    }
-  }, [getNonce]);
-
-  const handleSignOut = useCallback(async () => {
-    try {
-      setSigningOut(true);
-      await signOut({ redirect: false });
-      setSignInResult(undefined);
-    } finally {
-      setSigningOut(false);
-    }
-  }, []);
-
-  return (
-    <>
-      {status !== "authenticated" && (
-        <Button onClick={handleSignIn} disabled={signingIn}>
-          Sign In with Farcaster
-        </Button>
-      )}
-      {status === "authenticated" && (
-        <Button onClick={handleSignOut} disabled={signingOut}>
-          Sign out
-        </Button>
-      )}
-      {session && (
-        <div className="my-2 p-2 text-xs overflow-x-scroll bg-gray-100 rounded-lg font-mono">
-          <div className="font-semibold text-gray-500 mb-1">Session</div>
-          <div className="whitespace-pre">
-            {JSON.stringify(session, null, 2)}
-          </div>
-        </div>
-      )}
-      {signInFailure && !signingIn && (
-        <div className="my-2 p-2 text-xs overflow-x-scroll bg-gray-100 rounded-lg font-mono">
-          <div className="font-semibold text-gray-500 mb-1">SIWF Result</div>
-          <div className="whitespace-pre">{signInFailure}</div>
-        </div>
-      )}
-      {signInResult && !signingIn && (
-        <div className="my-2 p-2 text-xs overflow-x-scroll bg-gray-100 rounded-lg font-mono">
-          <div className="font-semibold text-gray-500 mb-1">SIWF Result</div>
-          <div className="whitespace-pre">
-            {JSON.stringify(signInResult, null, 2)}
-          </div>
-        </div>
-      )}
-    </>
-  );
-}
-
-const renderError = (error: Error | null) => {
-  if (!error) return null;
-  if (error instanceof BaseError) {
-    const isUserRejection = error.walk(
-      (e) => e instanceof UserRejectedRequestError
-    );
-
-    if (isUserRejection) {
-      return <div className="text-red-500 text-xs mt-1">Rejected by user.</div>;
-    }
-  }
-
-  return <div className="text-red-500 text-xs mt-1">{error.message}</div>;
-};
-
